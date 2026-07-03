@@ -1,0 +1,6 @@
+# Set default behavior to automatically normalize line endings
+* text=auto
+
+# Explicitly normalize Python and Markdown source files to LF (Unix-style)
+*.py text eol=lf
+*.md text eol=lf

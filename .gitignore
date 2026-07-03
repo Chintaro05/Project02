@@ -1,0 +1,8 @@
+# Local editor and Codex workspace files
+.vscode/
+.idea/
+.codex/
+
+# Python generated files
+__pycache__/
+*.Mjpeg
