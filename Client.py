@@ -20,14 +20,24 @@ class MulticastClientGUI:
         self.root.configure(bg="#1e222b")
         
         # Center the window
-        width, height = 700, 400
+        width, height = 900, 560
         ws = self.root.winfo_screenwidth()
         hs = self.root.winfo_screenheight()
         x = (ws // 2) - (width // 2)
         y = (hs // 2) - (height // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.resizable(False, False)
-        
+        self.root.minsize(640, 400)
+        self.root.resizable(True, True)  # allow resizing / maximizing
+
+        # Fullscreen toggle: F11 to enter, Esc to exit
+        self.is_fullscreen = False
+        self.root.bind("<F11>", self.toggle_fullscreen)
+        self.root.bind("<Escape>", self.exit_fullscreen)
+
+        # Keep the raw bytes of the last decoded frame so we can
+        # re-render it at the correct size whenever the window is resized
+        self.last_jpeg_data = None
+
         # Connection and state variables
         self.running = True
         self.last_packet_time = 0
@@ -71,33 +81,47 @@ class MulticastClientGUI:
         self.update_periodic_stats()
         
     def setup_ui(self):
-        # Left Panel (Video Display)
-        self.video_frame = tk.Frame(self.root, bg="#11141a", width=420, height=320, bd=2, relief=tk.SOLID)
-        self.video_frame.pack_propagate(False)
-        self.video_frame.place(x=15, y=20)
-        
+        # Root grid: column 0 (video) expands, column 1 (dashboard) stays fixed width.
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=0)
+
+        # Left Panel (Video Display) - expands with the window
+        self.video_frame = tk.Frame(self.root, bg="#11141a", bd=2, relief=tk.SOLID)
+        self.video_frame.grid(row=0, column=0, sticky="nsew", padx=(15, 10), pady=15)
+        self.video_frame.grid_rowconfigure(0, weight=1)
+        self.video_frame.grid_columnconfigure(0, weight=1)
+
         # Video placeholder/label
         self.video_label = tk.Label(self.video_frame, bg="#11141a")
-        self.video_label.pack(expand=True, fill=tk.BOTH)
-        
+        self.video_label.grid(row=0, column=0, sticky="nsew")
+
         # Placeholder image/text
         self.show_placeholder_text("Waiting for stream...")
-        
+
+        # Redraw the current frame (scaled) whenever the video area is resized
+        self.video_frame.bind("<Configure>", self.on_video_resize)
+
         # Status Bar (below video)
         self.status_frame = tk.Frame(self.root, bg="#1e222b")
-        self.status_frame.place(x=15, y=350, width=420, height=30)
-        
+        self.status_frame.grid(row=1, column=0, sticky="ew", padx=(15, 10), pady=(0, 15))
+
         self.status_dot = tk.Label(self.status_frame, text="●", fg="#f87171", bg="#1e222b", font=("Segoe UI", 12, "bold"))
         self.status_dot.pack(side=tk.LEFT)
         
         self.status_text = tk.Label(self.status_frame, text="WAITING FOR STREAM", fg="#abb2bf", bg="#1e222b", font=("Segoe UI", 10, "bold"))
         self.status_text.pack(side=tk.LEFT, padx=5)
-        
-        # Right Panel (Dashboard / Stats)
-        self.dashboard_frame = tk.Frame(self.root, bg="#282c34", width=230, height=320, bd=0, relief=tk.FLAT)
-        self.dashboard_frame.pack_propagate(False)
-        self.dashboard_frame.place(x=455, y=20)
-        
+
+        self.fullscreen_btn = tk.Button(self.status_frame, text="⛶ Fullscreen (F11)", command=self.toggle_fullscreen,
+                                         bg="#3b4048", fg="#ffffff", activebackground="#4b5263", activeforeground="#ffffff",
+                                         font=("Segoe UI", 9, "bold"), bd=0, cursor="hand2")
+        self.fullscreen_btn.pack(side=tk.RIGHT)
+
+        # Right Panel (Dashboard / Stats) - fixed width, full height
+        self.dashboard_frame = tk.Frame(self.root, bg="#282c34", width=230, bd=0, relief=tk.FLAT)
+        self.dashboard_frame.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(0, 15), pady=15)
+        self.dashboard_frame.grid_propagate(False)
+
         # Dashboard Title
         self.title_label = tk.Label(self.dashboard_frame, text="STREAM DASHBOARD", fg="#ffffff", bg="#282c34", font=("Segoe UI", 11, "bold"))
         self.title_label.pack(pady=(15, 5))
@@ -128,9 +152,9 @@ class MulticastClientGUI:
         self.val_bitrate = add_stat_row(self.stats_container, 5, "Bitrate:")
         self.val_data = add_stat_row(self.stats_container, 6, "Total Data:")
         
-        # Button Panel (Bottom Right)
-        self.btn_frame = tk.Frame(self.root, bg="#1e222b")
-        self.btn_frame.place(x=455, y=350, width=230, height=35)
+        # Button Panel (Bottom of dashboard)
+        self.btn_frame = tk.Frame(self.dashboard_frame, bg="#282c34")
+        self.btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
         
         # Reset Stats Button
         self.reset_btn = tk.Button(self.btn_frame, text="Reset Stats", command=self.reset_statistics, 
@@ -284,23 +308,56 @@ class MulticastClientGUI:
                 
             if latest_frame:
                 jpeg_data, seq_num, frame_num = latest_frame
-                
-                # Convert JPEG bytes to PIL image and then to PhotoImage
-                try:
-                    img = Image.open(io.BytesIO(jpeg_data))
-                    photo = ImageTk.PhotoImage(image=img)
-                    
-                    # Update label in Tkinter
-                    self.video_label.config(image=photo, text="")
-                    self.video_label.image = photo  # Keep a reference!
-                except Exception as img_err:
-                    print(f"[Client GUI] Error decoding image: {img_err}")
+                self.last_jpeg_data = jpeg_data  # remember for resize redraws
+                self.render_frame(jpeg_data)
                     
         except Exception as e:
             print(f"[Client GUI] Error in poll_frame_queue: {e}")
         finally:
             # Schedule next check in 10 ms
             self.root.after(10, self.poll_frame_queue)
+
+    def render_frame(self, jpeg_data):
+        """
+        Decodes a JPEG frame and displays it scaled to fit the current
+        video panel size, preserving aspect ratio.
+        """
+        try:
+            img = Image.open(io.BytesIO(jpeg_data))
+
+            # Fit the image inside the current video_frame dimensions
+            target_w = max(self.video_frame.winfo_width(), 1)
+            target_h = max(self.video_frame.winfo_height(), 1)
+            if target_w > 1 and target_h > 1:
+                img = img.copy()
+                img.thumbnail((target_w, target_h), Image.LANCZOS)
+
+            photo = ImageTk.PhotoImage(image=img)
+
+            # Update label in Tkinter
+            self.video_label.config(image=photo, text="")
+            self.video_label.image = photo  # Keep a reference!
+        except Exception as img_err:
+            print(f"[Client GUI] Error decoding image: {img_err}")
+
+    def on_video_resize(self, event):
+        """
+        Called whenever the video panel changes size (window resize,
+        maximize, or entering/exiting fullscreen). Redraws the last
+        received frame scaled to the new size so the picture never
+        looks stretched or clipped.
+        """
+        if self.last_jpeg_data is not None:
+            self.render_frame(self.last_jpeg_data)
+
+    def toggle_fullscreen(self, event=None):
+        self.is_fullscreen = not self.is_fullscreen
+        self.root.attributes("-fullscreen", self.is_fullscreen)
+
+    def exit_fullscreen(self, event=None):
+        if self.is_fullscreen:
+            self.is_fullscreen = False
+            self.root.attributes("-fullscreen", False)
             
     def update_periodic_stats(self):
         """
