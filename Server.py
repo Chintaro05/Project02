@@ -139,14 +139,17 @@ class MJPEGReader:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python Server.py <file MJPEG>")
+        print("Usage: python Server.py <file MJPEG> [interface_ip]")
         print("Example: python Server.py movie.mjpeg")
+        print("Example: python Server.py movie.mjpeg 26.100.200.5 (Radmin IP)")
         sys.exit(1)
         
     video_path = sys.argv[1]
     if not os.path.exists(video_path):
         print(f"Error: The file '{video_path}' does not exist.")
         sys.exit(1)
+        
+    interface_ip = sys.argv[2] if len(sys.argv) > 2 else None
         
     # Initialize the reader
     reader = MJPEGReader(video_path)
@@ -159,6 +162,14 @@ def main():
     # TTL = 1 limits packets to local network segment
     ttl = 1
     server_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
+    
+    if interface_ip:
+        try:
+            server_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
+            print(f"[Server] Configured sending multicast interface to IP: {interface_ip}")
+        except Exception as e:
+            print(f"[Server] Failed to bind to interface {interface_ip}: {e}")
+            print("[Server] Falling back to default system interface.")
     
     print("=" * 60)
     print("           MULTICAST VIDEO STREAMING SERVER")

@@ -14,8 +14,9 @@ PORT = 5004
 MAX_PACKET_SIZE = 65536  # UDP max payload size is 65507, 65536 is safe
 
 class MulticastClientGUI:
-    def __init__(self, root):
+    def __init__(self, root, interface_ip=None):
         self.root = root
+        self.interface_ip = interface_ip
         self.root.title("Multicast Video Player")
         self.root.configure(bg="#1e222b")
         
@@ -186,7 +187,12 @@ class MulticastClientGUI:
             self.client_socket.bind(('', PORT))
             
             # Pack membership request structure
-            mreq = struct.pack('4sL', socket.inet_aton(MULTICAST_GROUP), socket.INADDR_ANY)
+            if self.interface_ip:
+                mreq = struct.pack('4s4s', socket.inet_aton(MULTICAST_GROUP), socket.inet_aton(self.interface_ip))
+                print(f"[Client] Joining multicast group on specific interface IP: {self.interface_ip}")
+            else:
+                mreq = struct.pack('4sL', socket.inet_aton(MULTICAST_GROUP), socket.INADDR_ANY)
+                print("[Client] Joining multicast group on default interface (INADDR_ANY)")
             
             # Join the multicast group
             self.client_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
@@ -439,7 +445,10 @@ class MulticastClientGUI:
             
             # Clean up socket and leave multicast group
             try:
-                mreq = struct.pack('4sL', socket.inet_aton(MULTICAST_GROUP), socket.INADDR_ANY)
+                if self.interface_ip:
+                    mreq = struct.pack('4s4s', socket.inet_aton(MULTICAST_GROUP), socket.inet_aton(self.interface_ip))
+                else:
+                    mreq = struct.pack('4sL', socket.inet_aton(MULTICAST_GROUP), socket.INADDR_ANY)
                 self.client_socket.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, mreq)
                 self.client_socket.close()
                 print("[Client] Left multicast group and closed socket.")
@@ -450,8 +459,10 @@ class MulticastClientGUI:
             print("[Client] Player interface destroyed. Goodbye!")
 
 def main():
+    import sys
+    interface_ip = sys.argv[1] if len(sys.argv) > 1 else None
     root = tk.Tk()
-    app = MulticastClientGUI(root)
+    app = MulticastClientGUI(root, interface_ip=interface_ip)
     root.mainloop()
 
 if __name__ == "__main__":
